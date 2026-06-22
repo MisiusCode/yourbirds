@@ -1,5 +1,5 @@
 # Environment — never commit credentials
-backend/.env
+/.env
 
 # Dependencies
 node_modules/

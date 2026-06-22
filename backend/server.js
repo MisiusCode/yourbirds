@@ -1,4 +1,7 @@
-import 'dotenv/config';
+import { config as dotenvConfig } from 'dotenv';
+import { fileURLToPath } from 'url';
+dotenvConfig({ path: fileURLToPath(new URL('../.env', import.meta.url)) });
+
 import express from 'express';
 import cors from 'cors';
 import session from 'express-session';
@@ -7,7 +10,6 @@ import passport from 'passport';
 import { Strategy as GoogleStrategy } from 'passport-google-oauth20';
 import path from 'path';
 import fs from 'fs';
-import { fileURLToPath } from 'url';
 import { connectDb } from './db/mongoose.js';
 import User from './models/User.js';
 import { seedBirdNames } from './services/birdNameService.js';
