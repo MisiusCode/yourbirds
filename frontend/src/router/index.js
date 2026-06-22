@@ -7,7 +7,7 @@ import ProfileView from '../views/ProfileView.vue';
 const router = createRouter({
   history: createWebHistory(),
   routes: [
-    { path: '/', component: HomeView },
+    { path: '/', component: HomeView, meta: { fullBleed: true } },
     { path: '/upload', component: UploadView },
     { path: '/photos/:id', component: PhotoDetailView },
     { path: '/profile', component: ProfileView },

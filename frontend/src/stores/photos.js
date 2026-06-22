@@ -11,8 +11,8 @@ export const usePhotosStore = defineStore('photos', () => {
     loading.value = true;
     try {
       const [recent, top] = await Promise.all([
-        axios.get('/api/photos?sort=newest&limit=12', { withCredentials: true }),
-        axios.get('/api/photos?sort=rating&limit=12', { withCredentials: true }),
+        axios.get('/api/photos?sort=newest&limit=40', { withCredentials: true }),
+        axios.get('/api/photos?sort=rating&limit=20', { withCredentials: true }),
       ]);
       recentPhotos.value = recent.data;
       topPhotos.value = top.data;
