@@ -26,6 +26,7 @@ const editingField = ref(null);
 const editValue = ref('');
 const editSaving = ref(false);
 
+const facebookShareEnabled = import.meta.env.VITE_FACEBOOK_SHARE === 'true';
 const shareStep = ref(''); // '' | 'downloading' | 'done'
 
 const isOwner = computed(() => photo.value && authStore.user?.id === photo.value.user_id);
@@ -184,7 +185,7 @@ async function saveEdit() {
             {{ t.by }} {{ photo.user_name }} ·
             {{ new Date(photo.created_at).toLocaleDateString('lt-LT', { day: 'numeric', month: 'long', year: 'numeric' }) }}
           </p>
-          <button @click="shareToFacebook" :disabled="shareStep === 'downloading'"
+          <button v-if="facebookShareEnabled" @click="shareToFacebook" :disabled="shareStep === 'downloading'"
             class="flex items-center gap-1.5 text-xs font-medium text-white bg-[#1877F2] hover:bg-[#166FE5] disabled:opacity-60 px-3 py-1.5 rounded-lg transition-colors">
             <span v-if="shareStep === 'downloading'" class="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />
             <svg v-else class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24">
@@ -195,7 +196,7 @@ async function saveEdit() {
         </div>
 
         <!-- Share instructions panel (desktop) -->
-        <div v-if="shareStep === 'done'"
+        <div v-if="facebookShareEnabled && shareStep === 'done'"
           class="rounded-xl border border-blue-200 dark:border-blue-800 bg-blue-50 dark:bg-blue-900/30 p-4 text-sm text-blue-900 dark:text-blue-100">
           <div class="flex items-center justify-between mb-3">
             <p class="font-semibold">{{ t.shareStepsTitle }}</p>
