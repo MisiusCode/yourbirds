@@ -26,8 +26,7 @@ const editingField = ref(null);
 const editValue = ref('');
 const editSaving = ref(false);
 
-const shareCopied = ref(false);
-const shareHint = ref('');
+const shareStep = ref(''); // '' | 'downloading' | 'done'
 
 const isOwner = computed(() => photo.value && authStore.user?.id === photo.value.user_id);
 
@@ -91,20 +90,34 @@ async function deletePhoto() {
 }
 
 async function shareToFacebook() {
-  shareCopied.value = false;
-  shareHint.value = '';
+  const name = photo.value.ai_name_lt || photo.value.ai_name_en || photo.value.ai_latin_name || 'bird';
 
-  try {
-    const resp = await fetch(`/uploads/thumbnails/${photo.value.filename_thumbnail}`);
-    const blob = await resp.blob();
-    await navigator.clipboard.write([new ClipboardItem({ [blob.type]: blob })]);
-    shareCopied.value = true;
-    shareHint.value = t.value.shareHintCopied;
-  } catch {
-    shareHint.value = t.value.shareHintFallback;
+  // Mobile / supported browsers: Web Share API with file
+  if (typeof navigator.canShare === 'function') {
+    try {
+      const resp = await fetch(`/uploads/thumbnails/${photo.value.filename_thumbnail}`);
+      const blob = await resp.blob();
+      const file = new File([blob], `${name}.jpg`, { type: blob.type });
+      if (navigator.canShare({ files: [file] })) {
+        await navigator.share({ files: [file], title: name, text: photo.value.description || name });
+        return;
+      }
+    } catch { /* fall through to desktop path */ }
   }
 
-  window.open('https://www.facebook.com/', 'fb-post', 'width=960,height=720,left=100,top=60');
+  // Desktop: download photo + open Facebook
+  shareStep.value = 'downloading';
+  const a = document.createElement('a');
+  a.href = `/uploads/thumbnails/${photo.value.filename_thumbnail}`;
+  a.download = `${name}.jpg`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+
+  setTimeout(() => {
+    window.open('https://www.facebook.com/', 'facebook', 'width=960,height=700,left=100,top=50');
+    shareStep.value = 'done';
+  }, 600);
 }
 
 function setOgMeta(property, content) {
@@ -171,22 +184,37 @@ async function saveEdit() {
             {{ t.by }} {{ photo.user_name }} ·
             {{ new Date(photo.created_at).toLocaleDateString('lt-LT', { day: 'numeric', month: 'long', year: 'numeric' }) }}
           </p>
-          <button @click="shareToFacebook"
-            class="flex items-center gap-1.5 text-xs font-medium text-white bg-[#1877F2] hover:bg-[#166FE5] px-3 py-1.5 rounded-lg transition-colors">
-            <svg class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24">
+          <button @click="shareToFacebook" :disabled="shareStep === 'downloading'"
+            class="flex items-center gap-1.5 text-xs font-medium text-white bg-[#1877F2] hover:bg-[#166FE5] disabled:opacity-60 px-3 py-1.5 rounded-lg transition-colors">
+            <span v-if="shareStep === 'downloading'" class="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />
+            <svg v-else class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24">
               <path d="M24 12.073C24 5.405 18.627 0 12 0S0 5.405 0 12.073C0 18.1 4.388 23.094 10.125 24v-8.437H7.078v-3.49h3.047V9.41c0-3.025 1.792-4.697 4.533-4.697 1.312 0 2.686.236 2.686.236v2.97h-1.513c-1.491 0-1.956.93-1.956 1.874v2.25h3.328l-.532 3.49h-2.796V24C19.612 23.094 24 18.1 24 12.073z"/>
             </svg>
             {{ t.shareToFacebook }}
           </button>
         </div>
 
-        <!-- Share hint banner -->
-        <div v-if="shareHint"
-          class="flex items-start gap-3 rounded-xl px-4 py-3 text-sm"
-          :class="shareCopied ? 'bg-blue-50 dark:bg-blue-900/30 text-blue-800 dark:text-blue-200' : 'bg-yellow-50 dark:bg-yellow-900/30 text-yellow-800 dark:text-yellow-200'">
-          <span class="text-lg leading-none mt-0.5">{{ shareCopied ? '📋' : 'ℹ️' }}</span>
-          <p class="flex-1 leading-snug">{{ shareHint }}</p>
-          <button @click="shareHint = ''" class="opacity-50 hover:opacity-100 transition-opacity text-lg leading-none">✕</button>
+        <!-- Share instructions panel (desktop) -->
+        <div v-if="shareStep === 'done'"
+          class="rounded-xl border border-blue-200 dark:border-blue-800 bg-blue-50 dark:bg-blue-900/30 p-4 text-sm text-blue-900 dark:text-blue-100">
+          <div class="flex items-center justify-between mb-3">
+            <p class="font-semibold">{{ t.shareStepsTitle }}</p>
+            <button @click="shareStep = ''" class="opacity-40 hover:opacity-80 text-lg leading-none">✕</button>
+          </div>
+          <ol class="space-y-2 list-none">
+            <li class="flex items-start gap-2">
+              <span class="w-5 h-5 rounded-full bg-blue-200 dark:bg-blue-700 text-blue-800 dark:text-blue-100 text-xs font-bold flex items-center justify-center flex-shrink-0 mt-0.5">1</span>
+              <span>{{ t.shareStep1 }}</span>
+            </li>
+            <li class="flex items-start gap-2">
+              <span class="w-5 h-5 rounded-full bg-blue-200 dark:bg-blue-700 text-blue-800 dark:text-blue-100 text-xs font-bold flex items-center justify-center flex-shrink-0 mt-0.5">2</span>
+              <span>{{ t.shareStep2 }}</span>
+            </li>
+            <li class="flex items-start gap-2">
+              <span class="w-5 h-5 rounded-full bg-blue-200 dark:bg-blue-700 text-blue-800 dark:text-blue-100 text-xs font-bold flex items-center justify-center flex-shrink-0 mt-0.5">3</span>
+              <span>{{ t.shareStep3 }}</span>
+            </li>
+          </ol>
         </div>
 
         <!-- Rating -->
