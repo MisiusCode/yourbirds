@@ -180,6 +180,23 @@ async function saveEdit() {
             {{ t.fullResolution }}
           </a>
         </div>
+        <!-- Group photo strip -->
+        <div v-if="photo.group_siblings?.length" class="flex gap-2 overflow-x-auto scrollbar-hide pb-1">
+          <!-- Current photo -->
+          <div class="flex-shrink-0 w-16 h-16 rounded-lg overflow-hidden ring-2 ring-green-500">
+            <img :src="`/uploads/thumbnails/${photo.filename_thumbnail}`" class="w-full h-full object-cover" />
+          </div>
+          <!-- Siblings -->
+          <RouterLink
+            v-for="sib in photo.group_siblings"
+            :key="sib.id"
+            :to="`/photos/${sib.id}`"
+            class="flex-shrink-0 w-16 h-16 rounded-lg overflow-hidden ring-2 ring-transparent hover:ring-green-400 transition-all"
+          >
+            <img :src="`/uploads/thumbnails/${sib.filename_thumbnail}`" class="w-full h-full object-cover" />
+          </RouterLink>
+        </div>
+
         <div class="flex items-center justify-between">
           <p class="text-xs text-gray-400 dark:text-gray-500">
             {{ t.by }} {{ photo.user_name }} ·

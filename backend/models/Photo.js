@@ -23,6 +23,8 @@ const photoSchema = new mongoose.Schema({
     facts:         [String],
     factsLt:       [String],
   },
+  groupId:   { type: mongoose.Schema.Types.ObjectId, index: true, default: null },
+  groupIndex: { type: Number, default: 0 },
 }, { timestamps: true });
 
 photoSchema.index({ userId: 1 });

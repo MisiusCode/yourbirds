@@ -67,6 +67,16 @@ function serialize(p) {
     user_avatar:       p.userInfo?.avatarUrl || null,
     created_at:        p.createdAt,
     updated_at:        p.updatedAt,
+    group_id:          p.groupId?.toString() || null,
+    group_index:       p.groupIndex ?? 0,
+    group_siblings:    p.groupSiblings
+      ? p.groupSiblings.map(s => ({
+          id: s._id.toString(),
+          filename_thumbnail: s.filenameThumbnail,
+          filename_original:  s.filenameOriginal,
+          group_index:        s.groupIndex,
+        }))
+      : null,
   };
 }
 
@@ -155,37 +165,50 @@ router.get('/:id', async (req, res) => {
   ]);
 
   if (!photo) return res.status(404).json({ error: 'Not found' });
+
+  if (photo.groupId) {
+    photo.groupSiblings = await Photo.find(
+      { groupId: photo.groupId, _id: { $ne: photo._id } },
+      '_id filenameOriginal filenameThumbnail groupIndex'
+    ).sort({ groupIndex: 1 }).lean();
+  }
+
   res.json(serialize(photo));
 });
 
-// POST /api/photos
-router.post('/', requireAuth, upload.single('file'), async (req, res) => {
-  if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+// POST /api/photos  (accepts 1–10 files as `files[]`)
+router.post('/', requireAuth, upload.array('files', 10), async (req, res) => {
+  if (!req.files?.length) return res.status(400).json({ error: 'No files uploaded' });
   const { title, description } = req.body;
+  const groupId = req.files.length > 1 ? new mongoose.Types.ObjectId() : null;
 
-  const [exifData, thumbnailFilename] = await Promise.all([
-    extractExif(req.file.path),
-    generateThumbnail(req.file.filename),
-  ]);
+  const created = await Promise.all(req.files.map(async (file, index) => {
+    const [exifData, thumbnailFilename] = await Promise.all([
+      extractExif(file.path),
+      generateThumbnail(file.filename),
+    ]);
+    return Photo.create({
+      userId:            req.session.userId,
+      filenameOriginal:  file.filename,
+      filenameThumbnail: thumbnailFilename,
+      title:             index === 0 ? (title || undefined) : undefined,
+      description:       index === 0 ? (description || undefined) : undefined,
+      groupId,
+      groupIndex:        index,
+      exif: {
+        cameraModel: exifData.exif_camera_model || undefined,
+        aperture:    exifData.exif_aperture || undefined,
+        iso:         exifData.exif_iso || undefined,
+        focalLength: exifData.exif_focal_length || undefined,
+        takenAt:     exifData.exif_taken_at ? new Date(exifData.exif_taken_at) : undefined,
+        gpsLat:      exifData.exif_gps_lat || undefined,
+        gpsLng:      exifData.exif_gps_lng || undefined,
+      },
+    });
+  }));
 
-  const photo = await Photo.create({
-    userId:            req.session.userId,
-    filenameOriginal:  req.file.filename,
-    filenameThumbnail: thumbnailFilename,
-    title:             title || undefined,
-    description:       description || undefined,
-    exif: {
-      cameraModel: exifData.exif_camera_model || undefined,
-      aperture:    exifData.exif_aperture || undefined,
-      iso:         exifData.exif_iso || undefined,
-      focalLength: exifData.exif_focal_length || undefined,
-      takenAt:     exifData.exif_taken_at ? new Date(exifData.exif_taken_at) : undefined,
-      gpsLat:      exifData.exif_gps_lat || undefined,
-      gpsLng:      exifData.exif_gps_lng || undefined,
-    },
-  });
-
-  res.status(201).json(serialize({ ...photo.toObject(), avgRating: 0, voteCount: 0, userInfo: null }));
+  const primary = created[0];
+  res.status(201).json(serialize({ ...primary.toObject(), avgRating: 0, voteCount: 0, userInfo: null }));
 });
 
 // PATCH /api/photos/:id
