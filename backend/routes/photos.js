@@ -38,6 +38,29 @@ const photoWithStats = [
     },
   },
   { $unwind: '$userInfo' },
+  // Siblings within the same group
+  {
+    $lookup: {
+      from: 'photos',
+      let: { gid: '$groupId', selfId: '$_id' },
+      pipeline: [
+        {
+          $match: {
+            $expr: {
+              $and: [
+                { $ne: ['$$gid', null] },
+                { $eq: ['$groupId', '$$gid'] },
+                { $ne: ['$_id', '$$selfId'] },
+              ],
+            },
+          },
+        },
+        { $sort: { groupIndex: 1 } },
+        { $project: { _id: 1, filenameThumbnail: 1, filenameOriginal: 1, groupIndex: 1 } },
+      ],
+      as: 'groupSiblings',
+    },
+  },
 ];
 
 function serialize(p) {
@@ -69,7 +92,7 @@ function serialize(p) {
     updated_at:        p.updatedAt,
     group_id:          p.groupId?.toString() || null,
     group_index:       p.groupIndex ?? 0,
-    group_siblings:    p.groupSiblings
+    group_siblings:    p.groupSiblings?.length
       ? p.groupSiblings.map(s => ({
           id: s._id.toString(),
           filename_thumbnail: s.filenameThumbnail,
@@ -89,6 +112,7 @@ router.get('/', async (req, res) => {
     : { $sort: { createdAt: -1 } };
 
   const photos = await Photo.aggregate([
+    { $match: { $or: [{ groupIndex: 0 }, { groupIndex: { $exists: false } }] } },
     ...photoWithStats,
     sortStage,
     { $skip: offset },
@@ -148,7 +172,7 @@ router.get('/mine/club250', requireAuth, async (req, res) => {
 // GET /api/photos/mine
 router.get('/mine', requireAuth, async (req, res) => {
   const photos = await Photo.aggregate([
-    { $match: { userId: new mongoose.Types.ObjectId(req.session.userId) } },
+    { $match: { userId: new mongoose.Types.ObjectId(req.session.userId), $or: [{ groupIndex: 0 }, { groupIndex: { $exists: false } }] } },
     ...photoWithStats,
     { $sort: { createdAt: -1 } },
   ]);
@@ -165,14 +189,6 @@ router.get('/:id', async (req, res) => {
   ]);
 
   if (!photo) return res.status(404).json({ error: 'Not found' });
-
-  if (photo.groupId) {
-    photo.groupSiblings = await Photo.find(
-      { groupId: photo.groupId, _id: { $ne: photo._id } },
-      '_id filenameOriginal filenameThumbnail groupIndex'
-    ).sort({ groupIndex: 1 }).lean();
-  }
-
   res.json(serialize(photo));
 });
 

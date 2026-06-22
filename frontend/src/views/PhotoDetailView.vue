@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, onMounted } from 'vue';
+import { ref, computed, onMounted, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import axios from 'axios';
 import { useAuthStore } from '../stores/auth.js';
@@ -36,9 +36,22 @@ const displayName = computed(() => {
   return photo.value.ai_name_lt || photo.value.ai_name_en || photo.value.ai_latin_name || t.value.unknownBird;
 });
 
-onMounted(async () => {
+// All photos in the group, sorted — used for the thumbnail strip
+const groupStrip = computed(() => {
+  if (!photo.value?.group_siblings?.length) return [];
+  return [photo.value, ...photo.value.group_siblings]
+    .sort((a, b) => (a.group_index ?? 0) - (b.group_index ?? 0));
+});
+
+async function loadPhoto(id) {
+  loading.value = true;
+  notFound.value = false;
+  photo.value = null;
+  userVote.value = 0;
+  editingField.value = null;
+  shareStep.value = '';
   try {
-    const { data } = await axios.get(`/api/photos/${route.params.id}`, { withCredentials: true });
+    const { data } = await axios.get(`/api/photos/${id}`, { withCredentials: true });
     photo.value = data;
     const ogName = data.ai_name_lt || data.ai_name_en || data.ai_latin_name || 'Bird photo';
     setOgMeta('og:title', [data.title, ogName].filter(Boolean).join(' — '));
@@ -47,7 +60,7 @@ onMounted(async () => {
     setOgMeta('og:url', window.location.href);
     setOgMeta('og:type', 'article');
     if (authStore.user && !isOwner.value) {
-      const { data: voteData } = await axios.get(`/api/photos/${route.params.id}/vote`, { withCredentials: true });
+      const { data: voteData } = await axios.get(`/api/photos/${id}/vote`, { withCredentials: true });
       userVote.value = voteData.stars || 0;
     }
   } catch {
@@ -55,7 +68,10 @@ onMounted(async () => {
   } finally {
     loading.value = false;
   }
-});
+}
+
+onMounted(() => loadPhoto(route.params.id));
+watch(() => route.params.id, (newId) => { if (newId) loadPhoto(newId); });
 
 async function castVote(stars) {
   if (!authStore.user || isOwner.value || voteLoading.value) return;
@@ -181,20 +197,20 @@ async function saveEdit() {
           </a>
         </div>
         <!-- Group photo strip -->
-        <div v-if="photo.group_siblings?.length" class="flex gap-2 overflow-x-auto scrollbar-hide pb-1">
-          <!-- Current photo -->
-          <div class="flex-shrink-0 w-16 h-16 rounded-lg overflow-hidden ring-2 ring-green-500">
-            <img :src="`/uploads/thumbnails/${photo.filename_thumbnail}`" class="w-full h-full object-cover" />
-          </div>
-          <!-- Siblings -->
-          <RouterLink
-            v-for="sib in photo.group_siblings"
-            :key="sib.id"
-            :to="`/photos/${sib.id}`"
-            class="flex-shrink-0 w-16 h-16 rounded-lg overflow-hidden ring-2 ring-transparent hover:ring-green-400 transition-all"
-          >
-            <img :src="`/uploads/thumbnails/${sib.filename_thumbnail}`" class="w-full h-full object-cover" />
-          </RouterLink>
+        <div v-if="groupStrip.length" class="flex gap-2 overflow-x-auto scrollbar-hide pb-1">
+          <template v-for="p in groupStrip" :key="p.id">
+            <!-- Current photo: not a link -->
+            <div v-if="p.id === photo.id"
+              class="flex-shrink-0 w-16 h-16 rounded-lg overflow-hidden ring-2 ring-green-500">
+              <img :src="`/uploads/thumbnails/${p.filename_thumbnail}`" class="w-full h-full object-cover" />
+            </div>
+            <!-- Sibling: navigable -->
+            <RouterLink v-else
+              :to="`/photos/${p.id}`"
+              class="flex-shrink-0 w-16 h-16 rounded-lg overflow-hidden ring-2 ring-transparent hover:ring-green-400 transition-all opacity-70 hover:opacity-100">
+              <img :src="`/uploads/thumbnails/${p.filename_thumbnail}`" class="w-full h-full object-cover" />
+            </RouterLink>
+          </template>
         </div>
 
         <div class="flex items-center justify-between">
