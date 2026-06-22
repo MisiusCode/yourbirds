@@ -37,6 +37,12 @@ onMounted(async () => {
   try {
     const { data } = await axios.get(`/api/photos/${route.params.id}`, { withCredentials: true });
     photo.value = data;
+    const ogName = data.ai_name_lt || data.ai_name_en || data.ai_latin_name || 'Bird photo';
+    setOgMeta('og:title', [data.title, ogName].filter(Boolean).join(' — '));
+    setOgMeta('og:description', data.description || ogName);
+    setOgMeta('og:image', `${window.location.origin}/uploads/thumbnails/${data.filename_thumbnail}`);
+    setOgMeta('og:url', window.location.href);
+    setOgMeta('og:type', 'article');
     if (authStore.user && !isOwner.value) {
       const { data: voteData } = await axios.get(`/api/photos/${route.params.id}/vote`, { withCredentials: true });
       userVote.value = voteData.stars || 0;
@@ -79,6 +85,19 @@ async function deletePhoto() {
   if (!confirm(t.value.deletePhotoConfirm)) return;
   await axios.delete(`/api/photos/${route.params.id}`, { withCredentials: true });
   router.push('/profile');
+}
+
+function shareToFacebook() {
+  const name = photo.value.ai_name_lt || photo.value.ai_name_en || photo.value.ai_latin_name || '';
+  const quote = [name, photo.value.description].filter(Boolean).join(' — ');
+  const shareUrl = `https://www.facebook.com/sharer/sharer.php?u=${encodeURIComponent(window.location.href)}${quote ? `&quote=${encodeURIComponent(quote)}` : ''}`;
+  window.open(shareUrl, 'fb-share', 'width=620,height=440,left=200,top=100');
+}
+
+function setOgMeta(property, content) {
+  let el = document.querySelector(`meta[property="${property}"]`);
+  if (!el) { el = document.createElement('meta'); el.setAttribute('property', property); document.head.appendChild(el); }
+  el.setAttribute('content', content);
 }
 
 function startEdit(field, currentValue) { editingField.value = field; editValue.value = currentValue || ''; }
@@ -134,10 +153,19 @@ async function saveEdit() {
             {{ t.fullResolution }}
           </a>
         </div>
-        <p class="text-xs text-gray-400 dark:text-gray-500 text-center">
-          {{ t.by }} {{ photo.user_name }} ·
-          {{ new Date(photo.created_at).toLocaleDateString('lt-LT', { day: 'numeric', month: 'long', year: 'numeric' }) }}
-        </p>
+        <div class="flex items-center justify-between">
+          <p class="text-xs text-gray-400 dark:text-gray-500">
+            {{ t.by }} {{ photo.user_name }} ·
+            {{ new Date(photo.created_at).toLocaleDateString('lt-LT', { day: 'numeric', month: 'long', year: 'numeric' }) }}
+          </p>
+          <button @click="shareToFacebook"
+            class="flex items-center gap-1.5 text-xs font-medium text-white bg-[#1877F2] hover:bg-[#166FE5] px-3 py-1.5 rounded-lg transition-colors">
+            <svg class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24">
+              <path d="M24 12.073C24 5.405 18.627 0 12 0S0 5.405 0 12.073C0 18.1 4.388 23.094 10.125 24v-8.437H7.078v-3.49h3.047V9.41c0-3.025 1.792-4.697 4.533-4.697 1.312 0 2.686.236 2.686.236v2.97h-1.513c-1.491 0-1.956.93-1.956 1.874v2.25h3.328l-.532 3.49h-2.796V24C19.612 23.094 24 18.1 24 12.073z"/>
+            </svg>
+            {{ t.shareToFacebook }}
+          </button>
+        </div>
 
         <!-- Rating -->
         <div class="bg-white dark:bg-gray-800 rounded-2xl p-5 shadow-sm text-center">
