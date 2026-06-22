@@ -26,6 +26,9 @@ const editingField = ref(null);
 const editValue = ref('');
 const editSaving = ref(false);
 
+const shareCopied = ref(false);
+const shareHint = ref('');
+
 const isOwner = computed(() => photo.value && authStore.user?.id === photo.value.user_id);
 
 const displayName = computed(() => {
@@ -87,11 +90,21 @@ async function deletePhoto() {
   router.push('/profile');
 }
 
-function shareToFacebook() {
-  const name = photo.value.ai_name_lt || photo.value.ai_name_en || photo.value.ai_latin_name || '';
-  const quote = [name, photo.value.description].filter(Boolean).join(' — ');
-  const shareUrl = `https://www.facebook.com/sharer/sharer.php?u=${encodeURIComponent(window.location.href)}${quote ? `&quote=${encodeURIComponent(quote)}` : ''}`;
-  window.open(shareUrl, 'fb-share', 'width=620,height=440,left=200,top=100');
+async function shareToFacebook() {
+  shareCopied.value = false;
+  shareHint.value = '';
+
+  try {
+    const resp = await fetch(`/uploads/thumbnails/${photo.value.filename_thumbnail}`);
+    const blob = await resp.blob();
+    await navigator.clipboard.write([new ClipboardItem({ [blob.type]: blob })]);
+    shareCopied.value = true;
+    shareHint.value = t.value.shareHintCopied;
+  } catch {
+    shareHint.value = t.value.shareHintFallback;
+  }
+
+  window.open('https://www.facebook.com/', 'fb-post', 'width=960,height=720,left=100,top=60');
 }
 
 function setOgMeta(property, content) {
@@ -165,6 +178,15 @@ async function saveEdit() {
             </svg>
             {{ t.shareToFacebook }}
           </button>
+        </div>
+
+        <!-- Share hint banner -->
+        <div v-if="shareHint"
+          class="flex items-start gap-3 rounded-xl px-4 py-3 text-sm"
+          :class="shareCopied ? 'bg-blue-50 dark:bg-blue-900/30 text-blue-800 dark:text-blue-200' : 'bg-yellow-50 dark:bg-yellow-900/30 text-yellow-800 dark:text-yellow-200'">
+          <span class="text-lg leading-none mt-0.5">{{ shareCopied ? '📋' : 'ℹ️' }}</span>
+          <p class="flex-1 leading-snug">{{ shareHint }}</p>
+          <button @click="shareHint = ''" class="opacity-50 hover:opacity-100 transition-opacity text-lg leading-none">✕</button>
         </div>
 
         <!-- Rating -->
