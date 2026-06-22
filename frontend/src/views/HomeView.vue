@@ -26,7 +26,7 @@ onMounted(() => store.fetchHome());
       </div>
 
       <!-- Scrollable grid -->
-      <div class="flex-1 overflow-y-auto min-h-0 p-3">
+      <div class="flex-1 overflow-y-auto min-h-0 scrollbar-hide scroll-smooth p-3">
 
         <!-- Skeleton -->
         <div v-if="store.loading" class="grid grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 gap-3">
@@ -69,7 +69,7 @@ onMounted(() => store.fetchHome());
       </div>
 
       <!-- Scrollable list -->
-      <div class="flex-1 overflow-y-auto min-h-0 p-3 space-y-3">
+      <div class="flex-1 overflow-y-auto min-h-0 scrollbar-hide scroll-smooth p-3 space-y-3">
 
         <!-- Skeleton -->
         <template v-if="store.loading">
