@@ -1,0 +1,26 @@
+# Environment — never commit credentials
+backend/.env
+
+# Dependencies
+node_modules/
+backend/node_modules/
+frontend/node_modules/
+
+# Uploaded photos (user content, not code)
+backend/uploads/
+
+# Build output
+frontend/dist/
+
+# Logs
+*.log
+npm-debug.log*
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor / IDE tools
+.vscode/settings.json
+.idea/
+.claude/

@@ -1,0 +1,89 @@
+import express from 'express';
+import passport from 'passport';
+import bcrypt from 'bcryptjs';
+import User from '../models/User.js';
+
+const router = express.Router();
+
+function sessionUser(user) {
+  return {
+    id: user._id.toString(),
+    name: user.name,
+    email: user.email,
+    avatar_url: user.avatarUrl || null,
+  };
+}
+
+// ── Email/password register ──────────────────────────────────────────────────
+
+router.post('/register', async (req, res) => {
+  const { name, email, password } = req.body;
+  if (!name?.trim() || !email?.trim() || !password) {
+    return res.status(400).json({ error: 'Name, email and password are required' });
+  }
+  if (password.length < 6) {
+    return res.status(400).json({ error: 'Password must be at least 6 characters' });
+  }
+
+  try {
+    const passwordHash = await bcrypt.hash(password, 12);
+    const user = await User.create({ name: name.trim(), email: email.trim().toLowerCase(), passwordHash });
+    req.session.userId = user._id.toString();
+    req.session.user = sessionUser(user);
+    res.status(201).json({ user: req.session.user });
+  } catch (err) {
+    if (err.code === 11000) return res.status(409).json({ error: 'Email is already registered' });
+    console.error('Register error:', err.message);
+    res.status(500).json({ error: 'Registration failed' });
+  }
+});
+
+// ── Email/password login ─────────────────────────────────────────────────────
+
+router.post('/login', async (req, res) => {
+  const { email, password } = req.body;
+  if (!email?.trim() || !password) {
+    return res.status(400).json({ error: 'Email and password are required' });
+  }
+
+  const user = await User.findOne({ email: email.trim().toLowerCase() }).select('+passwordHash');
+  if (!user || !user.passwordHash) {
+    return res.status(401).json({ error: 'Invalid email or password' });
+  }
+
+  const valid = await bcrypt.compare(password, user.passwordHash);
+  if (!valid) return res.status(401).json({ error: 'Invalid email or password' });
+
+  req.session.userId = user._id.toString();
+  req.session.user = sessionUser(user);
+  res.json({ user: req.session.user });
+});
+
+// ── Google OAuth ─────────────────────────────────────────────────────────────
+
+router.get('/google', passport.authenticate('google', { scope: ['profile', 'email'], session: false }));
+
+router.get(
+  '/google/callback',
+  passport.authenticate('google', { session: false, failureRedirect: `${process.env.FRONTEND_URL || 'http://localhost:5173'}?auth=failed` }),
+  (req, res) => {
+    req.session.userId = req.user._id.toString();
+    req.session.user = sessionUser(req.user);
+    req.session.save(() => {
+      res.redirect(`${process.env.FRONTEND_URL || 'http://localhost:5173'}?auth=success`);
+    });
+  }
+);
+
+// ── Session ──────────────────────────────────────────────────────────────────
+
+router.get('/me', (req, res) => {
+  if (!req.session.userId) return res.status(401).json({ error: 'Not authenticated' });
+  res.json({ user: req.session.user });
+});
+
+router.post('/logout', (req, res) => {
+  req.session.destroy(() => res.json({ success: true }));
+});
+
+export default router;
