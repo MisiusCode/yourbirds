@@ -1,8 +1,12 @@
 // Seed Lithuanian bird names into DynamoDB (run once after setting up tables).
 // Usage: node backend/scripts/seedBirdNames.js
+// For local dev: set AWS_ENDPOINT_URL=http://localhost:8000 before running
+// For production: unset AWS_ENDPOINT_URL (uses AWS credential chain)
 import { config as dotenvConfig } from 'dotenv';
 import { fileURLToPath } from 'url';
-dotenvConfig({ path: fileURLToPath(new URL('../../.env', import.meta.url)) });
+if (!process.env.AWS_REGION || process.env.AWS_REGION === 'local') {
+  dotenvConfig({ path: fileURLToPath(new URL('../../.env', import.meta.url)) });
+}
 
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { DynamoDBDocumentClient, BatchWriteCommand, GetCommand } from '@aws-sdk/lib-dynamodb';
