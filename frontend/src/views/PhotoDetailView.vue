@@ -8,6 +8,7 @@ import ExifDisplay from '../components/photo/ExifDisplay.vue';
 import BirdFacts from '../components/ai/BirdFacts.vue';
 import SpeciesPanel from '../components/ai/SpeciesPanel.vue';
 import StarRating from '../components/voting/StarRating.vue';
+import { thumbUrl, origUrl } from '../utils/photoUrl.js';
 
 const route = useRoute();
 const router = useRouter();
@@ -56,7 +57,7 @@ async function loadPhoto(id) {
     const ogName = data.ai_name_lt || data.ai_name_en || data.ai_latin_name || 'Bird photo';
     setOgMeta('og:title', [data.title, ogName].filter(Boolean).join(' — '));
     setOgMeta('og:description', data.description || ogName);
-    setOgMeta('og:image', `${window.location.origin}/uploads/thumbnails/${data.filename_thumbnail}`);
+    setOgMeta('og:image', `${window.location.origin}${thumbUrl(data.filename_thumbnail)}`);
     setOgMeta('og:url', window.location.href);
     setOgMeta('og:type', 'article');
     if (authStore.user && !isOwner.value) {
@@ -112,7 +113,7 @@ async function shareToFacebook() {
   // Mobile / supported browsers: Web Share API with file
   if (typeof navigator.canShare === 'function') {
     try {
-      const resp = await fetch(`/uploads/thumbnails/${photo.value.filename_thumbnail}`);
+      const resp = await fetch(thumbUrl(photo.value.filename_thumbnail));
       const blob = await resp.blob();
       const file = new File([blob], `${name}.jpg`, { type: blob.type });
       if (navigator.canShare({ files: [file] })) {
@@ -125,7 +126,7 @@ async function shareToFacebook() {
   // Desktop: download photo + open Facebook
   shareStep.value = 'downloading';
   const a = document.createElement('a');
-  a.href = `/uploads/thumbnails/${photo.value.filename_thumbnail}`;
+  a.href = thumbUrl(photo.value.filename_thumbnail);
   a.download = `${name}.jpg`;
   document.body.appendChild(a);
   a.click();
@@ -184,11 +185,11 @@ async function saveEdit() {
       <div class="w-full lg:w-3/5 lg:sticky lg:top-24 space-y-4">
         <div class="relative group">
           <img
-            :src="`/uploads/originals/${photo.filename_original}`"
+            :src="origUrl(photo.filename_original)"
             :alt="displayName"
             class="w-full rounded-2xl shadow-xl object-contain max-h-[70vh] bg-gray-900"
           />
-          <a :href="`/uploads/originals/${photo.filename_original}`" target="_blank" rel="noopener"
+          <a :href="origUrl(photo.filename_original)" target="_blank" rel="noopener"
             class="absolute bottom-3 right-3 flex items-center gap-1.5 bg-black/50 hover:bg-black/70 text-white text-xs font-medium px-3 py-1.5 rounded-lg backdrop-blur-sm opacity-0 group-hover:opacity-100 transition-opacity">
             <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" d="M4 8V6a2 2 0 012-2h2M4 16v2a2 2 0 002 2h2m8-16h2a2 2 0 012 2v2m0 8v2a2 2 0 01-2 2h-2"/>
@@ -202,13 +203,13 @@ async function saveEdit() {
             <!-- Current photo: not a link -->
             <div v-if="p.id === photo.id"
               class="flex-shrink-0 w-16 h-16 rounded-lg overflow-hidden ring-2 ring-green-500">
-              <img :src="`/uploads/thumbnails/${p.filename_thumbnail}`" class="w-full h-full object-cover" />
+              <img :src="thumbUrl(p.filename_thumbnail)" class="w-full h-full object-cover" />
             </div>
             <!-- Sibling: navigable -->
             <RouterLink v-else
               :to="`/photos/${p.id}`"
               class="flex-shrink-0 w-16 h-16 rounded-lg overflow-hidden ring-2 ring-transparent hover:ring-green-400 transition-all opacity-70 hover:opacity-100">
-              <img :src="`/uploads/thumbnails/${p.filename_thumbnail}`" class="w-full h-full object-cover" />
+              <img :src="thumbUrl(p.filename_thumbnail)" class="w-full h-full object-cover" />
             </RouterLink>
           </template>
         </div>

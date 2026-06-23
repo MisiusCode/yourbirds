@@ -3,6 +3,7 @@ import { computed } from 'vue';
 import { useSettingsStore } from '../../stores/settings.js';
 import { useI18n } from '../../i18n/index.js';
 import StarRating from '../voting/StarRating.vue';
+import { thumbUrl } from '../../utils/photoUrl.js';
 
 const props = defineProps({
   photo: { type: Object, required: true },
@@ -33,7 +34,7 @@ const subName = computed(() => {
   >
     <div class="aspect-square overflow-hidden bg-gray-100 dark:bg-gray-700">
       <img
-        :src="`/uploads/thumbnails/${photo.filename_thumbnail}`"
+        :src="thumbUrl(photo.filename_thumbnail)"
         :alt="displayName"
         class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
         loading="lazy"

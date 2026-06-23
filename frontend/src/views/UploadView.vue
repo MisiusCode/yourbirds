@@ -5,6 +5,7 @@ import axios from 'axios';
 import { useAuthStore } from '../stores/auth.js';
 import { useI18n } from '../i18n/index.js';
 import SpeciesPanel from '../components/ai/SpeciesPanel.vue';
+import { thumbUrl } from '../utils/photoUrl.js';
 
 const authStore = useAuthStore();
 const router = useRouter();
@@ -178,7 +179,7 @@ function viewPhoto() { if (uploadedPhoto.value) router.push(`/photos/${uploadedP
 
     <!-- Post-upload state -->
     <div v-else class="space-y-4">
-      <img :src="`/uploads/thumbnails/${uploadedPhoto.filename_thumbnail}`" class="max-h-72 mx-auto rounded-2xl object-contain shadow-lg" />
+      <img :src="thumbUrl(uploadedPhoto.filename_thumbnail)" class="max-h-72 mx-auto rounded-2xl object-contain shadow-lg" />
 
       <div class="bg-white dark:bg-gray-800 rounded-2xl p-6 shadow-sm">
         <p class="text-green-700 dark:text-green-400 font-bold text-lg mb-4">{{ t.photoUploaded }}</p>

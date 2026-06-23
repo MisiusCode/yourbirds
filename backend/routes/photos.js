@@ -2,75 +2,30 @@ import express from 'express';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import mongoose from 'mongoose';
 import { requireAuth } from '../middleware/auth.js';
 import upload from '../middleware/upload.js';
-import Photo from '../models/Photo.js';
+import { db, TABLE_PHOTOS } from '../db/dynamodb.js';
+import {
+  GetCommand, PutCommand, UpdateCommand, DeleteCommand,
+  QueryCommand, ScanCommand,
+} from '@aws-sdk/lib-dynamodb';
 import { extractExif } from '../services/exifService.js';
 import { generateThumbnail } from '../services/imageService.js';
 import { updateLithuanianName } from '../services/birdNameService.js';
+import { uploadFileToS3, deleteFromS3 } from '../services/s3Service.js';
 
 const router = express.Router();
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const uploadsBase = path.join(__dirname, '..', 'uploads');
 
-const photoWithStats = [
-  {
-    $lookup: {
-      from: 'votes',
-      localField: '_id',
-      foreignField: 'photoId',
-      as: 'votesData',
-    },
-  },
-  {
-    $addFields: {
-      avgRating: { $round: [{ $ifNull: [{ $avg: '$votesData.stars' }, 0] }, 1] },
-      voteCount: { $size: '$votesData' },
-    },
-  },
-  {
-    $lookup: {
-      from: 'users',
-      localField: 'userId',
-      foreignField: '_id',
-      as: 'userInfo',
-    },
-  },
-  { $unwind: '$userInfo' },
-  // Siblings within the same group
-  {
-    $lookup: {
-      from: 'photos',
-      let: { gid: '$groupId', selfId: '$_id' },
-      pipeline: [
-        {
-          $match: {
-            $expr: {
-              $and: [
-                { $ne: ['$$gid', null] },
-                { $eq: ['$groupId', '$$gid'] },
-                { $ne: ['$_id', '$$selfId'] },
-              ],
-            },
-          },
-        },
-        { $sort: { groupIndex: 1 } },
-        { $project: { _id: 1, filenameThumbnail: 1, filenameOriginal: 1, groupIndex: 1 } },
-      ],
-      as: 'groupSiblings',
-    },
-  },
-];
-
 function serialize(p) {
   return {
-    id: p._id.toString(),
-    user_id: p.userId.toString(),
+    id:                p.photoId,
+    user_id:           p.userId,
     filename_original: p.filenameOriginal,
     filename_thumbnail: p.filenameThumbnail,
-    title: p.title || null,
-    description: p.description || null,
+    title:             p.title || null,
+    description:       p.description || null,
     exif_camera_model: p.exif?.cameraModel || null,
     exif_aperture:     p.exif?.aperture || null,
     exif_iso:          p.exif?.iso || null,
@@ -86,15 +41,15 @@ function serialize(p) {
     ai_facts_lt:       p.ai?.factsLt?.length ? p.ai.factsLt : null,
     avg_rating:        p.avgRating ?? 0,
     vote_count:        p.voteCount ?? 0,
-    user_name:         p.userInfo?.name || null,
-    user_avatar:       p.userInfo?.avatarUrl || null,
+    user_name:         p.userName || null,
+    user_avatar:       p.userAvatar || null,
     created_at:        p.createdAt,
     updated_at:        p.updatedAt,
-    group_id:          p.groupId?.toString() || null,
+    group_id:          p.groupId || null,
     group_index:       p.groupIndex ?? 0,
     group_siblings:    p.groupSiblings?.length
       ? p.groupSiblings.map(s => ({
-          id: s._id.toString(),
+          id: s.id,
           filename_thumbnail: s.filenameThumbnail,
           filename_original:  s.filenameOriginal,
           group_index:        s.groupIndex,
@@ -106,89 +61,108 @@ function serialize(p) {
 // GET /api/photos?sort=newest|rating&page=1&limit=20
 router.get('/', async (req, res) => {
   const { sort = 'newest', page = 1, limit = 20 } = req.query;
-  const offset = (Math.max(1, parseInt(page)) - 1) * parseInt(limit);
-  const sortStage = sort === 'rating'
-    ? { $sort: { avgRating: -1, createdAt: -1 } }
-    : { $sort: { createdAt: -1 } };
+  const limitNum = parseInt(limit);
 
-  const photos = await Photo.aggregate([
-    { $match: { $or: [{ groupIndex: 0 }, { groupIndex: { $exists: false } }] } },
-    ...photoWithStats,
-    sortStage,
-    { $skip: offset },
-    { $limit: parseInt(limit) },
-  ]);
+  if (sort === 'rating') {
+    // Scan all primary photos, sort by rating in JS
+    const { Items = [] } = await db.send(new ScanCommand({
+      TableName: TABLE_PHOTOS,
+      FilterExpression: 'gsiPk = :all',
+      ExpressionAttributeValues: { ':all': 'ALL' },
+    }));
+    const sorted = Items.sort((a, b) => (b.avgRating ?? 0) - (a.avgRating ?? 0));
+    return res.json(sorted.slice(0, limitNum).map(serialize));
+  }
 
-  res.json(photos.map(serialize));
+  // sort=newest: query gallery-index GSI
+  const { Items = [] } = await db.send(new QueryCommand({
+    TableName: TABLE_PHOTOS,
+    IndexName: 'gallery-index',
+    KeyConditionExpression: 'gsiPk = :all',
+    ExpressionAttributeValues: { ':all': 'ALL' },
+    ScanIndexForward: false,
+    Limit: limitNum,
+  }));
+
+  res.json(Items.map(serialize));
 });
 
 // GET /api/photos/mine/club250
 router.get('/mine/club250', requireAuth, async (req, res) => {
-  const uid = new mongoose.Types.ObjectId(req.session.userId);
-  const data = await Photo.aggregate([
-    {
-      $match: {
-        userId: uid,
-        'ai.latinName': { $exists: true, $nin: [null, '', 'Unknown'] },
-      },
-    },
-    { $addFields: { year: { $year: '$createdAt' } } },
-    // one document per (year, species)
-    {
-      $group: {
-        _id: { year: '$year', latinName: '$ai.latinName' },
-        nameLt:     { $first: '$ai.nameLt' },
-        nameEn:     { $first: '$ai.nameEn' },
-        firstSeen:  { $min: '$createdAt' },
-        photoCount: { $sum: 1 },
-      },
-    },
-    // roll up per year
-    {
-      $group: {
-        _id: '$_id.year',
-        count: { $sum: 1 },
-        species: {
-          $push: {
-            latinName:  '$_id.latinName',
-            nameLt:     '$nameLt',
-            nameEn:     '$nameEn',
-            firstSeen:  '$firstSeen',
-            photoCount: '$photoCount',
-          },
-        },
-      },
-    },
-    { $sort: { _id: -1 } },
-  ]);
+  const { Items = [] } = await db.send(new QueryCommand({
+    TableName: TABLE_PHOTOS,
+    IndexName: 'user-index',
+    KeyConditionExpression: 'userId = :uid',
+    ExpressionAttributeValues: { ':uid': req.session.userId },
+  }));
 
-  res.json(data.map(y => ({
-    year: y._id,
-    count: y.count,
-    species: y.species.sort((a, b) => new Date(a.firstSeen) - new Date(b.firstSeen)),
-  })));
+  const withSpecies = Items.filter(p => p.ai?.latinName && p.ai.latinName !== 'Unknown');
+
+  const byYear = {};
+  for (const photo of withSpecies) {
+    const year = new Date(photo.createdAt).getFullYear();
+    if (!byYear[year]) byYear[year] = {};
+    const key = photo.ai.latinName.toLowerCase();
+    if (!byYear[year][key]) {
+      byYear[year][key] = {
+        latinName: photo.ai.latinName,
+        nameLt: photo.ai.nameLt || null,
+        nameEn: photo.ai.nameEn || null,
+        firstSeen: photo.createdAt,
+        photoCount: 0,
+      };
+    }
+    byYear[year][key].photoCount++;
+    if (photo.createdAt < byYear[year][key].firstSeen) {
+      byYear[year][key].firstSeen = photo.createdAt;
+    }
+  }
+
+  const result = Object.entries(byYear)
+    .sort(([a], [b]) => b - a)
+    .map(([year, speciesMap]) => ({
+      year: parseInt(year),
+      count: Object.keys(speciesMap).length,
+      species: Object.values(speciesMap).sort((a, b) => new Date(a.firstSeen) - new Date(b.firstSeen)),
+    }));
+
+  res.json(result);
 });
 
 // GET /api/photos/mine
 router.get('/mine', requireAuth, async (req, res) => {
-  const photos = await Photo.aggregate([
-    { $match: { userId: new mongoose.Types.ObjectId(req.session.userId), $or: [{ groupIndex: 0 }, { groupIndex: { $exists: false } }] } },
-    ...photoWithStats,
-    { $sort: { createdAt: -1 } },
-  ]);
-  res.json(photos.map(serialize));
+  const { Items = [] } = await db.send(new QueryCommand({
+    TableName: TABLE_PHOTOS,
+    IndexName: 'user-index',
+    KeyConditionExpression: 'userId = :uid',
+    FilterExpression: 'gsiPk = :all',
+    ExpressionAttributeValues: { ':uid': req.session.userId, ':all': 'ALL' },
+    ScanIndexForward: false,
+  }));
+  res.json(Items.sort((a, b) => b.createdAt.localeCompare(a.createdAt)).map(serialize));
 });
 
 // GET /api/photos/:id
 router.get('/:id', async (req, res) => {
-  if (!mongoose.Types.ObjectId.isValid(req.params.id)) return res.status(404).json({ error: 'Not found' });
-
-  const [photo] = await Photo.aggregate([
-    { $match: { _id: new mongoose.Types.ObjectId(req.params.id) } },
-    ...photoWithStats,
-  ]);
-
+  const { Item: photo } = await db.send(new GetCommand({
+    TableName: TABLE_PHOTOS,
+    Key: { photoId: req.params.id },
+  }));
   if (!photo) return res.status(404).json({ error: 'Not found' });
+
+  // For secondary photos, fetch siblings dynamically from GSI
+  if (photo.groupId && (photo.groupIndex ?? 0) !== 0) {
+    const { Items: groupPhotos = [] } = await db.send(new QueryCommand({
+      TableName: TABLE_PHOTOS,
+      IndexName: 'group-index',
+      KeyConditionExpression: 'groupId = :gid',
+      ExpressionAttributeValues: { ':gid': photo.groupId },
+    }));
+    photo.groupSiblings = groupPhotos
+      .filter(p => p.photoId !== photo.photoId)
+      .map(p => ({ id: p.photoId, filenameThumbnail: p.filenameThumbnail, filenameOriginal: p.filenameOriginal, groupIndex: p.groupIndex ?? 0 }));
+  }
+
   res.json(serialize(photo));
 });
 
@@ -196,81 +170,176 @@ router.get('/:id', async (req, res) => {
 router.post('/', requireAuth, upload.array('files', 10), async (req, res) => {
   if (!req.files?.length) return res.status(400).json({ error: 'No files uploaded' });
   const { title, description } = req.body;
-  const groupId = req.files.length > 1 ? new mongoose.Types.ObjectId() : null;
+  const groupId = req.files.length > 1 ? crypto.randomUUID() : null;
+  const now = new Date().toISOString();
+  const userName = req.session.user?.name || '';
+  const userAvatar = req.session.user?.avatar_url || null;
 
-  const created = await Promise.all(req.files.map(async (file, index) => {
+  const siblings = [];
+
+  await Promise.all(req.files.map(async (file, index) => {
+    const photoId = crypto.randomUUID();
+    const isPrimary = index === 0;
+
     const [exifData, thumbnailFilename] = await Promise.all([
       extractExif(file.path),
       generateThumbnail(file.filename),
     ]);
-    return Photo.create({
-      userId:            req.session.userId,
-      filenameOriginal:  file.filename,
-      filenameThumbnail: thumbnailFilename,
-      title:             index === 0 ? (title || undefined) : undefined,
-      description:       index === 0 ? (description || undefined) : undefined,
-      groupId,
-      groupIndex:        index,
-      exif: {
-        cameraModel: exifData.exif_camera_model || undefined,
-        aperture:    exifData.exif_aperture || undefined,
-        iso:         exifData.exif_iso || undefined,
-        focalLength: exifData.exif_focal_length || undefined,
-        takenAt:     exifData.exif_taken_at ? new Date(exifData.exif_taken_at) : undefined,
-        gpsLat:      exifData.exif_gps_lat || undefined,
-        gpsLng:      exifData.exif_gps_lng || undefined,
+
+    if (process.env.S3_BUCKET) {
+      const thumbPath = path.join(uploadsBase, 'thumbnails', thumbnailFilename);
+      await Promise.all([
+        uploadFileToS3(file.path, `originals/${file.filename}`, file.mimetype),
+        uploadFileToS3(thumbPath, `thumbnails/${thumbnailFilename}`, 'image/jpeg'),
+      ]);
+      try { fs.unlinkSync(file.path); } catch {}
+      try { fs.unlinkSync(thumbPath); } catch {}
+    }
+
+    siblings.push({ id: photoId, filenameThumbnail: thumbnailFilename, filenameOriginal: file.filename, groupIndex: index });
+
+    await db.send(new PutCommand({
+      TableName: TABLE_PHOTOS,
+      Item: {
+        photoId,
+        // Only primary photos appear in the gallery-index GSI
+        gsiPk: isPrimary ? 'ALL' : undefined,
+        gsiSk: isPrimary ? `${now}#${photoId}` : undefined,
+        userId: req.session.userId,
+        userName,
+        userAvatar,
+        filenameOriginal: file.filename,
+        filenameThumbnail: thumbnailFilename,
+        title: isPrimary ? (title || undefined) : undefined,
+        description: isPrimary ? (description || undefined) : undefined,
+        groupId: groupId || undefined,
+        groupIndex: index,
+        groupSiblings: isPrimary ? [] : undefined,
+        avgRating: 0,
+        voteCount: 0,
+        createdAt: now,
+        updatedAt: now,
+        exif: {
+          cameraModel: exifData.exif_camera_model || undefined,
+          aperture:    exifData.exif_aperture || undefined,
+          iso:         exifData.exif_iso || undefined,
+          focalLength: exifData.exif_focal_length || undefined,
+          takenAt:     exifData.exif_taken_at || undefined,
+          gpsLat:      exifData.exif_gps_lat || undefined,
+          gpsLng:      exifData.exif_gps_lng || undefined,
+        },
       },
-    });
+    }));
   }));
 
-  const primary = created[0];
-  res.status(201).json(serialize({ ...primary.toObject(), avgRating: 0, voteCount: 0, userInfo: null }));
+  // Update primary photo's groupSiblings once all are created
+  if (groupId) {
+    const groupSiblings = siblings.filter(s => s.groupIndex !== 0);
+    await db.send(new UpdateCommand({
+      TableName: TABLE_PHOTOS,
+      Key: { photoId: siblings[0].id },
+      UpdateExpression: 'SET groupSiblings = :siblings',
+      ExpressionAttributeValues: { ':siblings': groupSiblings },
+    }));
+  }
+
+  // Return the primary photo
+  const { Item: primary } = await db.send(new GetCommand({
+    TableName: TABLE_PHOTOS,
+    Key: { photoId: siblings[0].id },
+  }));
+  res.status(201).json(serialize(primary));
 });
 
 // PATCH /api/photos/:id
 router.patch('/:id', requireAuth, async (req, res) => {
-  if (!mongoose.Types.ObjectId.isValid(req.params.id)) return res.status(404).json({ error: 'Not found' });
-
-  const photo = await Photo.findById(req.params.id);
+  const { Item: photo } = await db.send(new GetCommand({
+    TableName: TABLE_PHOTOS,
+    Key: { photoId: req.params.id },
+  }));
   if (!photo) return res.status(404).json({ error: 'Not found' });
-  if (photo.userId.toString() !== req.session.userId) return res.status(403).json({ error: 'Forbidden' });
+  if (photo.userId !== req.session.userId) return res.status(403).json({ error: 'Forbidden' });
 
   const { title, description, ai_latin_name, ai_latin_approved, ai_name_lt, ai_name_en } = req.body;
-  if (title !== undefined)            photo.title = title;
-  if (description !== undefined)      photo.description = description;
-  if (ai_latin_name !== undefined || ai_latin_approved !== undefined || ai_name_lt !== undefined || ai_name_en !== undefined) {
-    if (!photo.ai) photo.ai = {};
-    if (ai_latin_name !== undefined)     photo.ai.latinName = ai_latin_name;
-    if (ai_latin_approved !== undefined) photo.ai.latinApproved = ai_latin_approved;
-    if (ai_name_lt !== undefined)        photo.ai.nameLt = ai_name_lt;
-    if (ai_name_en !== undefined)        photo.ai.nameEn = ai_name_en;
-    photo.markModified('ai');
 
-    // Persist Lithuanian name edit back to the species database
-    if (ai_name_lt !== undefined && photo.ai.latinName) {
-      await updateLithuanianName(photo.ai.latinName, ai_name_lt);
+  const updates = [];
+  const vals = {};
+
+  if (title !== undefined)       { updates.push('title = :title');       vals[':title'] = title; }
+  if (description !== undefined) { updates.push('description = :desc');  vals[':desc'] = description; }
+
+  if (ai_latin_name !== undefined || ai_latin_approved !== undefined || ai_name_lt !== undefined || ai_name_en !== undefined) {
+    const ai = photo.ai || {};
+    if (ai_latin_name !== undefined)     ai.latinName    = ai_latin_name;
+    if (ai_latin_approved !== undefined) ai.latinApproved = ai_latin_approved;
+    if (ai_name_lt !== undefined)        ai.nameLt       = ai_name_lt;
+    if (ai_name_en !== undefined)        ai.nameEn       = ai_name_en;
+    updates.push('ai = :ai');
+    vals[':ai'] = ai;
+
+    if (ai_name_lt !== undefined && ai.latinName) {
+      await updateLithuanianName(ai.latinName, ai_name_lt);
     }
   }
-  await photo.save();
 
-  const [updated] = await Photo.aggregate([
-    { $match: { _id: photo._id } },
-    ...photoWithStats,
-  ]);
+  updates.push('updatedAt = :upd');
+  vals[':upd'] = new Date().toISOString();
+
+  await db.send(new UpdateCommand({
+    TableName: TABLE_PHOTOS,
+    Key: { photoId: req.params.id },
+    UpdateExpression: 'SET ' + updates.join(', '),
+    ExpressionAttributeValues: vals,
+  }));
+
+  const { Item: updated } = await db.send(new GetCommand({
+    TableName: TABLE_PHOTOS,
+    Key: { photoId: req.params.id },
+  }));
   res.json(serialize(updated));
 });
 
 // DELETE /api/photos/:id
 router.delete('/:id', requireAuth, async (req, res) => {
-  if (!mongoose.Types.ObjectId.isValid(req.params.id)) return res.status(404).json({ error: 'Not found' });
-
-  const photo = await Photo.findById(req.params.id);
+  const { Item: photo } = await db.send(new GetCommand({
+    TableName: TABLE_PHOTOS,
+    Key: { photoId: req.params.id },
+  }));
   if (!photo) return res.status(404).json({ error: 'Not found' });
-  if (photo.userId.toString() !== req.session.userId) return res.status(403).json({ error: 'Forbidden' });
+  if (photo.userId !== req.session.userId) return res.status(403).json({ error: 'Forbidden' });
 
-  try { fs.unlinkSync(path.join(uploadsBase, 'originals', photo.filenameOriginal)); } catch {}
-  try { fs.unlinkSync(path.join(uploadsBase, 'thumbnails', photo.filenameThumbnail)); } catch {}
-  await photo.deleteOne();
+  // Remove files
+  if (process.env.S3_BUCKET) {
+    await deleteFromS3(`originals/${photo.filenameOriginal}`, `thumbnails/${photo.filenameThumbnail}`);
+  } else {
+    try { fs.unlinkSync(path.join(uploadsBase, 'originals', photo.filenameOriginal)); } catch {}
+    try { fs.unlinkSync(path.join(uploadsBase, 'thumbnails', photo.filenameThumbnail)); } catch {}
+  }
+
+  // If this is a sibling, remove it from the primary photo's groupSiblings list
+  if (photo.groupId && (photo.groupIndex ?? 0) !== 0) {
+    const { Items: groupPhotos = [] } = await db.send(new QueryCommand({
+      TableName: TABLE_PHOTOS,
+      IndexName: 'group-index',
+      KeyConditionExpression: 'groupId = :gid AND groupIndex = :zero',
+      ExpressionAttributeValues: { ':gid': photo.groupId, ':zero': 0 },
+    }));
+    const primary = groupPhotos[0];
+    if (primary) {
+      const updatedSiblings = (primary.groupSiblings || []).filter(s => s.id !== req.params.id);
+      await db.send(new UpdateCommand({
+        TableName: TABLE_PHOTOS,
+        Key: { photoId: primary.photoId },
+        UpdateExpression: 'SET groupSiblings = :siblings',
+        ExpressionAttributeValues: { ':siblings': updatedSiblings },
+      }));
+    }
+  }
+
+  await db.send(new DeleteCommand({
+    TableName: TABLE_PHOTOS,
+    Key: { photoId: req.params.id },
+  }));
 
   res.json({ success: true });
 });

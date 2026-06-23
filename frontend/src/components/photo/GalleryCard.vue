@@ -2,6 +2,7 @@
 import { ref, computed } from 'vue';
 import { useSettingsStore } from '../../stores/settings.js';
 import { useI18n } from '../../i18n/index.js';
+import { thumbUrl } from '../../utils/photoUrl.js';
 
 const props = defineProps({
   photo: { type: Object, required: true },
@@ -63,7 +64,7 @@ const MEDALS = ['🥇', '🥈', '🥉'];
   >
     <!-- Photo (changes on mouse move across group) -->
     <img
-      :src="`/uploads/thumbnails/${activePhoto.filename_thumbnail}`"
+      :src="thumbUrl(activePhoto.filename_thumbnail)"
       :alt="displayName"
       class="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
       loading="lazy"

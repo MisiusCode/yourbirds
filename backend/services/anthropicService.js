@@ -1,17 +1,16 @@
 import Anthropic from '@anthropic-ai/sdk';
 import fetch from 'node-fetch';
-import fs from 'fs';
-import path from 'path';
 import { lookupLithuanianName } from './birdNameService.js';
 
 // Node 24's built-in fetch (undici) is blocked by Windows security software;
 // node-fetch uses the native https module and is not affected.
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY, fetch });
 
-export async function identifySpecies(imagePath) {
-  const base64 = fs.readFileSync(imagePath).toString('base64');
-  const ext = path.extname(imagePath).slice(1).toLowerCase();
-  const mediaType = ext === 'jpg' ? 'image/jpeg' : ext === 'png' ? 'image/png' : 'image/webp';
+// imageBuffer: Buffer (from local file or S3 download)
+export async function identifySpecies(imageBuffer) {
+  const base64 = imageBuffer.toString('base64');
+  // Thumbnails are always generated as JPEG by imageService
+  const mediaType = 'image/jpeg';
 
   const response = await client.messages.create({
     model: 'claude-opus-4-8',

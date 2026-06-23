@@ -1,17 +1,28 @@
 import express from 'express';
 import passport from 'passport';
 import bcrypt from 'bcryptjs';
-import User from '../models/User.js';
+import { db, TABLE_USERS } from '../db/dynamodb.js';
+import { GetCommand, PutCommand, QueryCommand } from '@aws-sdk/lib-dynamodb';
 
 const router = express.Router();
 
 function sessionUser(user) {
   return {
-    id: user._id.toString(),
+    id: user.userId,
     name: user.name,
     email: user.email,
     avatar_url: user.avatarUrl || null,
   };
+}
+
+async function findByEmail(email) {
+  const { Items } = await db.send(new QueryCommand({
+    TableName: TABLE_USERS,
+    IndexName: 'email-index',
+    KeyConditionExpression: 'email = :e',
+    ExpressionAttributeValues: { ':e': email.trim().toLowerCase() },
+  }));
+  return Items?.[0] || null;
 }
 
 // ── Email/password register ──────────────────────────────────────────────────
@@ -26,13 +37,23 @@ router.post('/register', async (req, res) => {
   }
 
   try {
+    const existing = await findByEmail(email);
+    if (existing) return res.status(409).json({ error: 'Email is already registered' });
+
     const passwordHash = await bcrypt.hash(password, 12);
-    const user = await User.create({ name: name.trim(), email: email.trim().toLowerCase(), passwordHash });
-    req.session.userId = user._id.toString();
+    const userId = crypto.randomUUID();
+    const user = {
+      userId,
+      name: name.trim(),
+      email: email.trim().toLowerCase(),
+      passwordHash,
+      createdAt: new Date().toISOString(),
+    };
+    await db.send(new PutCommand({ TableName: TABLE_USERS, Item: user }));
+    req.session.userId = userId;
     req.session.user = sessionUser(user);
     res.status(201).json({ user: req.session.user });
   } catch (err) {
-    if (err.code === 11000) return res.status(409).json({ error: 'Email is already registered' });
     console.error('Register error:', err.message);
     res.status(500).json({ error: 'Registration failed' });
   }
@@ -46,7 +67,7 @@ router.post('/login', async (req, res) => {
     return res.status(400).json({ error: 'Email and password are required' });
   }
 
-  const user = await User.findOne({ email: email.trim().toLowerCase() }).select('+passwordHash');
+  const user = await findByEmail(email);
   if (!user || !user.passwordHash) {
     return res.status(401).json({ error: 'Invalid email or password' });
   }
@@ -54,7 +75,7 @@ router.post('/login', async (req, res) => {
   const valid = await bcrypt.compare(password, user.passwordHash);
   if (!valid) return res.status(401).json({ error: 'Invalid email or password' });
 
-  req.session.userId = user._id.toString();
+  req.session.userId = user.userId;
   req.session.user = sessionUser(user);
   res.json({ user: req.session.user });
 });
@@ -67,7 +88,7 @@ router.get(
   '/google/callback',
   passport.authenticate('google', { session: false, failureRedirect: `${process.env.FRONTEND_URL || 'http://localhost:5173'}?auth=failed` }),
   (req, res) => {
-    req.session.userId = req.user._id.toString();
+    req.session.userId = req.user.userId;
     req.session.user = sessionUser(req.user);
     req.session.save(() => {
       res.redirect(`${process.env.FRONTEND_URL || 'http://localhost:5173'}?auth=success`);

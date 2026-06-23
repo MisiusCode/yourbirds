@@ -5,14 +5,13 @@ dotenvConfig({ path: fileURLToPath(new URL('../.env', import.meta.url)) });
 import express from 'express';
 import cors from 'cors';
 import session from 'express-session';
-import MongoStore from 'connect-mongo';
 import passport from 'passport';
 import { Strategy as GoogleStrategy } from 'passport-google-oauth20';
 import path from 'path';
 import fs from 'fs';
-import { connectDb } from './db/mongoose.js';
-import User from './models/User.js';
-import { seedBirdNames } from './services/birdNameService.js';
+import { DynamoDBSessionStore } from './db/sessionStore.js';
+import { db, TABLE_USERS } from './db/dynamodb.js';
+import { QueryCommand, GetCommand, PutCommand, UpdateCommand } from '@aws-sdk/lib-dynamodb';
 import authRoutes from './routes/auth.js';
 import photosRoutes from './routes/photos.js';
 import votesRoutes from './routes/votes.js';
@@ -20,14 +19,10 @@ import aiRoutes from './routes/ai.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
+// Keep local upload dirs for local dev (ignored when S3_BUCKET is set)
 for (const dir of ['uploads/originals', 'uploads/thumbnails']) {
   fs.mkdirSync(path.join(__dirname, dir), { recursive: true });
 }
-
-const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://localhost:27017/yourbirds';
-
-await connectDb();
-await seedBirdNames();
 
 const app = express();
 
@@ -38,14 +33,14 @@ app.use(cors({
 app.use(express.json());
 
 app.use(session({
-  store: MongoStore.create({ mongoUrl: MONGODB_URI }),
+  store: new DynamoDBSessionStore(),
   secret: process.env.SESSION_SECRET || 'dev-secret-change-in-production',
   resave: false,
   saveUninitialized: false,
   cookie: {
     httpOnly: true,
     sameSite: 'lax',
-    secure: false,
+    secure: process.env.NODE_ENV === 'production',
     maxAge: 7 * 24 * 60 * 60 * 1000,
   },
 }));
@@ -63,20 +58,43 @@ if (process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET) {
       try {
         const email = profile.emails?.[0]?.value;
         const avatar = profile.photos?.[0]?.value || null;
+        const googleId = profile.id;
 
-        // Try by Google ID first, then merge by email if an existing account matches
-        let user = await User.findOne({ googleId: profile.id });
-        if (!user) {
-          user = await User.findOne({ email });
-          if (user) {
-            user.googleId = profile.id;
-            if (!user.avatarUrl) user.avatarUrl = avatar;
-            await user.save();
-          } else {
-            user = await User.create({ googleId: profile.id, email, name: profile.displayName, avatarUrl: avatar });
+        // Try by Google ID first
+        const { Items: byGoogle } = await db.send(new QueryCommand({
+          TableName: TABLE_USERS,
+          IndexName: 'google-index',
+          KeyConditionExpression: 'googleId = :gid',
+          ExpressionAttributeValues: { ':gid': googleId },
+        }));
+        if (byGoogle?.length) return done(null, byGoogle[0]);
+
+        // Try by email — merge Google ID onto existing account
+        if (email) {
+          const { Items: byEmail } = await db.send(new QueryCommand({
+            TableName: TABLE_USERS,
+            IndexName: 'email-index',
+            KeyConditionExpression: 'email = :e',
+            ExpressionAttributeValues: { ':e': email },
+          }));
+          if (byEmail?.length) {
+            const user = byEmail[0];
+            await db.send(new UpdateCommand({
+              TableName: TABLE_USERS,
+              Key: { userId: user.userId },
+              UpdateExpression: 'SET googleId = :gid' + (!user.avatarUrl && avatar ? ', avatarUrl = :av' : ''),
+              ExpressionAttributeValues: { ':gid': googleId, ...((!user.avatarUrl && avatar) ? { ':av': avatar } : {}) },
+            }));
+            user.googleId = googleId;
+            return done(null, user);
           }
         }
-        done(null, user);
+
+        // Create new user
+        const userId = crypto.randomUUID();
+        const newUser = { userId, googleId, email, name: profile.displayName, avatarUrl: avatar, createdAt: new Date().toISOString() };
+        await db.send(new PutCommand({ TableName: TABLE_USERS, Item: newUser }));
+        done(null, newUser);
       } catch (err) {
         done(err);
       }
@@ -86,7 +104,13 @@ if (process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET) {
   console.warn('GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET not set — OAuth login disabled');
 }
 
-app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+// Serve uploads locally only (production files are on S3)
+if (process.env.NODE_ENV !== 'production') {
+  app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+}
+
+// Health check for Elastic Beanstalk
+app.get('/health', (_, res) => res.json({ status: 'ok' }));
 
 app.use('/api/photos/:id/vote', votesRoutes);
 app.use('/api/photos', photosRoutes);

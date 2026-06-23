@@ -20,6 +20,9 @@ npm-debug.log*
 .DS_Store
 Thumbs.db
 
+# Elastic Beanstalk config (contains machine-specific paths)
+.elasticbeanstalk/
+
 # Editor / IDE tools
 .vscode/settings.json
 .idea/
