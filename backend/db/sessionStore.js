@@ -5,14 +5,17 @@ import { db, TABLE_SESSIONS } from './dynamodb.js';
 export class DynamoDBSessionStore extends Store {
   async get(sid, callback) {
     try {
+      console.log('[session store] get:', sid);
       const { Item } = await db.send(new GetCommand({
         TableName: TABLE_SESSIONS,
         Key: { id: sid },
       }));
+      console.log('[session store] found:', !!Item, 'userId:', Item?.sess?.userId);
       if (!Item) return callback(null, null);
       if (Item.expires && Item.expires < Date.now()) return callback(null, null);
       callback(null, Item.sess);
     } catch (err) {
+      console.error('[session store] get error:', err.message);
       callback(err);
     }
   }
