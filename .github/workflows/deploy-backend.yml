@@ -7,12 +7,21 @@ on:
       - 'backend/**'
       - 'Procfile'
       - '.ebextensions/**'
+      - '.platform/**'
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      - name: Zip deployment package
+        run: |
+          zip -r deploy.zip . \
+            --exclude "*.git*" \
+            --exclude "frontend/node_modules/*" \
+            --exclude "frontend/dist/*" \
+            --exclude "backend/uploads/*"
 
       - name: Deploy to Elastic Beanstalk
         uses: einaregilsson/beanstalk-deploy@v21
@@ -23,4 +32,4 @@ jobs:
           environment_name: yourbirds-prod
           region: eu-north-1
           version_label: ${{ github.sha }}
-          deployment_package: .
+          deployment_package: deploy.zip
