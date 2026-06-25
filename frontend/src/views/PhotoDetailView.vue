@@ -57,7 +57,8 @@ async function loadPhoto(id) {
     const ogName = data.ai_name_lt || data.ai_name_en || data.ai_latin_name || 'Bird photo';
     setOgMeta('og:title', [data.title, ogName].filter(Boolean).join(' — '));
     setOgMeta('og:description', data.description || ogName);
-    setOgMeta('og:image', `${window.location.origin}${thumbUrl(data.filename_thumbnail)}`);
+    const ogImage = thumbUrl(data.filename_thumbnail);
+    setOgMeta('og:image', ogImage.startsWith('http') ? ogImage : `${window.location.origin}${ogImage}`);
     setOgMeta('og:url', window.location.href);
     setOgMeta('og:type', 'article');
     if (authStore.user && !isOwner.value) {
