@@ -26,6 +26,9 @@ for (const dir of ['uploads/originals', 'uploads/thumbnails']) {
 
 const app = express();
 
+// Trust ALB/proxy headers so req.protocol is correct when HTTPS is terminated at load balancer
+app.set('trust proxy', 1);
+
 app.use(cors({
   origin: process.env.FRONTEND_URL || 'http://localhost:5173',
   credentials: true,
@@ -40,7 +43,7 @@ app.use(session({
   cookie: {
     httpOnly: true,
     sameSite: 'lax',
-    secure: process.env.NODE_ENV === 'production',
+    secure: process.env.COOKIE_SECURE === 'true',
     maxAge: 7 * 24 * 60 * 60 * 1000,
   },
 }));
