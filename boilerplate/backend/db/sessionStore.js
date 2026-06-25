@@ -20,7 +20,8 @@ export class DynamoDBSessionStore extends Store {
   async set(sid, session, callback) {
     try {
       const maxAge = session.cookie?.maxAge || 7 * 24 * 60 * 60 * 1000;
-      // JSON round-trip converts Cookie class instance to plain object so DynamoDB can marshall it
+      // JSON round-trip converts Cookie class instance to a plain object.
+      // DynamoDB Document Client rejects class instances with "Unsupported type passed".
       const sess = JSON.parse(JSON.stringify(session));
       await db.send(new PutCommand({
         TableName: TABLE_SESSIONS,

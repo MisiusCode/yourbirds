@@ -1,0 +1,37 @@
+name: Deploy Backend to Elastic Beanstalk
+
+on:
+  workflow_dispatch:   # allow manual trigger from GitHub Actions UI
+  push:
+    branches: [master]
+    paths:
+      - 'backend/**'
+      - 'Procfile'
+      - '.ebextensions/**'
+      - '.platform/**'
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Zip deployment package
+        run: |
+          zip -r deploy.zip . \
+            --exclude "*.git*" \
+            --exclude "frontend/node_modules/*" \
+            --exclude "frontend/dist/*" \
+            --exclude "backend/uploads/*"
+
+      - name: Deploy to Elastic Beanstalk
+        uses: einaregilsson/beanstalk-deploy@v21
+        with:
+          aws_access_key: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws_secret_key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          application_name: myapp            # change to your EB application name
+          environment_name: myapp-prod       # change to your EB environment name
+          region: eu-north-1                 # change to your AWS region
+          version_label: ${{ github.sha }}
+          deployment_package: deploy.zip
+          use_existing_version_if_available: true
