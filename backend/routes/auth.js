@@ -52,7 +52,13 @@ router.post('/register', async (req, res) => {
     await db.send(new PutCommand({ TableName: TABLE_USERS, Item: user }));
     req.session.userId = userId;
     req.session.user = sessionUser(user);
-    res.status(201).json({ user: req.session.user });
+    req.session.save(err => {
+      if (err) {
+        console.error('Session save error (register):', err);
+        return res.status(500).json({ error: 'Registration failed' });
+      }
+      res.status(201).json({ user: req.session.user });
+    });
   } catch (err) {
     console.error('Register error:', err.message);
     res.status(500).json({ error: 'Registration failed' });
@@ -77,7 +83,13 @@ router.post('/login', async (req, res) => {
 
   req.session.userId = user.userId;
   req.session.user = sessionUser(user);
-  res.json({ user: req.session.user });
+  req.session.save(err => {
+    if (err) {
+      console.error('Session save error (login):', err);
+      return res.status(500).json({ error: 'Login failed' });
+    }
+    res.json({ user: req.session.user });
+  });
 });
 
 // ── Google OAuth ─────────────────────────────────────────────────────────────
