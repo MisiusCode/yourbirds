@@ -2,7 +2,7 @@ name: Deploy Backend to Elastic Beanstalk
 
 on:
   push:
-    branches: [main]
+    branches: [master]
     paths:
       - 'backend/**'
       - 'Procfile'
@@ -21,6 +21,6 @@ jobs:
           aws_secret_key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           application_name: yourbirds
           environment_name: yourbirds-prod
-          region: us-east-1
+          region: eu-north-1
           version_label: ${{ github.sha }}
           deployment_package: .
